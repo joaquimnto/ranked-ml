@@ -132,7 +132,6 @@ tb_book_medal AS (
                 THEN 1 ELSE 0
             END 
             ) AS AssinaturaAtiva
-
     FROM 
         tb_medals
     GROUP BY
