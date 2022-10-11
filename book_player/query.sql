@@ -4,8 +4,8 @@ WITH tb_lobby AS (
     FROM
         tb_lobby_stats_player
     WHERE
-        dtCreatedAt < '2022-02-01'
-        AND dtCreatedAt > date('2022-02-01', '-30 day')
+        dtCreatedAt < '{date}'
+        AND dtCreatedAt > date('{date}', '-30 day')
 ),
 tb_stats AS (
     SELECT
@@ -13,6 +13,7 @@ tb_stats AS (
         COUNT(DISTINCT idLobbyGame) AS qtPartidas,
         COUNT(DISTINCT CASE WHEN qtRoundsPlayed < 16 THEN idLobbyGame END) AS qtPartidasMenos16,
         COUNT(DISTINCT date(dtCreatedAt)) AS qtDias,
+        MIN(JULIANDAY('{date}') - JULIANDAY(dtCreatedAt)) AS qtDiasUltimaLobby,
         1.0 * COUNT(DISTINCT idLobbyGame)/COUNT(DISTINCT date(dtCreatedAt)) AS qtMediaPartidasDia,
         AVG(qtKill) AS avgQtKill,
         AVG(qtAssist) AS avgQtAssist,
@@ -95,12 +96,66 @@ tb_level_atual AS (
             tb_lobby
     )
     WHERE rn = 1
-)
+),
+tb_book_lobby AS (
+    SELECT
+        t1.*,
+        t2.vlLevel as vlLevelAtual
+    FROM
+        tb_stats AS t1
+    LEFT JOIN tb_level_atual AS t2
+        ON t1.idPlayer = t2.idPlayer
+),
+tb_medals AS (
+    SELECT
+        *
+    FROM
+        tb_players_medalha AS t1
+    LEFT JOIN tb_medalha AS t2
+        ON t1.idMedal = t2.idMedal
+    WHERE 
+        dtCreatedAt < dtExpiration
+        AND dtCreatedAt < '{date}'
+        AND COALESCE(dtRemove, dtExpiration) > date('{date}', '-30 day')
+),
+tb_book_medal AS (
+    SELECT 
+        idPlayer,
+        COUNT(DISTINCT idMedal) AS qtMedalhaDist,
+        COUNT(DISTINCT CASE WHEN dtCreatedAt > date('{date}', '-30 day') THEN id END) AS qtMedalhaAdquirida,
+        SUM(CASE WHEN descMedal = 'Membro Premium' THEN 1 ELSE 0 END) AS qtPremium,
+        SUM(CASE WHEN descMedal = 'Membro Plus' THEN 1 ELSE 0 END) AS qtPlus,
+        MAX(CASE 
+                WHEN 
+                    descMedal IN('Membro Premium', 'Membro Plus')
+                    AND COALESCE(dtRemove, dtExpiration) >= '{date}'
+                THEN 1 ELSE 0
+            END 
+            ) AS AssinaturaAtiva
 
+    FROM 
+        tb_medals
+    GROUP BY
+        idPlayer
+)
 SELECT
     t1.*,
-    t2.vlLevel as vlLevelAtual
-FROM
-    tb_stats AS t1
-LEFT JOIN tb_level_atual AS t2
-    ON t1.idPlayer = t2.idPlayer    
+    COALESCE(t2.qtMedalhaDist, 0) AS qtMedalhaDist,
+    COALESCE(t2.qtMedalhaAdquirida, 0) AS qtMedalhaAdquirida,
+    COALESCE(t2.qtPremium, 0) AS qtPremium,
+    COALESCE(t2.qtPlus, 0) AS qtPlus,
+    COALESCE(t2.AssinaturaAtiva, 0) AS AssinaturaAtiva,
+    t3.flFacebook,
+    t3.flTwitter,
+    t3.flTwitch,
+    t3.descCountry,
+    t3.dtBirth,
+    ((JulianDay('{date}')) - JulianDay(t3.dtBirth))/365.25 AS vlIdade,
+    t3.dtRegistration,
+    (JulianDay('{date}')) - JulianDay(t3.dtRegistration) AS vlDiasCadastro
+FROM 
+    tb_book_lobby AS t1
+LEFT JOIN tb_book_medal AS t2
+    ON t1.idPlayer = t2.idPlayer
+LEFT JOIN tb_players AS t3
+    ON t1.idPlayer = t3.idPlayer
