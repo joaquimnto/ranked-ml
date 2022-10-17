@@ -7,6 +7,10 @@ import matplotlib.pyplot as plt
 
 from sklearn import model_selection
 from sklearn import ensemble
+from sklearn import tree
+from sklearn import linear_model
+
+
 from sklearn import pipeline
 from sklearn import metrics
 
@@ -21,7 +25,7 @@ pd.set_option('display.max_columns', None)
 con = sqlalchemy.create_engine("sqlite:///../../../data/gc.db") 
 df = pd.read_sql_table('tb_abt_sub', con)
 
-## Back-test
+## Back-test/Out of Time
 ### .copy() utilizado para alocar o novo objeto na memória
 df_oot = df[df["dtRef"].isin(['2022-01-15', '2022-01-16'])].copy()
 df_train = df[~df["dtRef"].isin(['2022-01-15', '2022-01-16'])].copy()
@@ -65,20 +69,38 @@ imput_1 = imputation.ArbitraryNumberImputer(arbitrary_number=-1, variables=missi
 onehot = encoding.OneHotEncoder(drop_last=True, variables=cat_features)
 # %%
 # MODEL
-model = ensemble.RandomForestClassifier(n_estimators=200, min_samples_leaf=20, n_jobs=-1)
+rf_clf = ensemble.RandomForestClassifier(n_estimators=200, min_samples_leaf=20, n_jobs=-1, random_state=42)
 
 ## Definir um pipeline
-model_pipe = pipeline.Pipeline(steps= [("Imput 0 ", imput_0),
+
+params = {"n_estimators":[200,250],
+          "min_samples_leaf": [5,10,20] }
+
+grid_search = model_selection.GridSearchCV(rf_clf, params, n_jobs=1, cv=4, scoring='roc_auc', refit=True)
+
+pipe_rf = pipeline.Pipeline(steps= [("Imput 0 ", imput_0),
                                        ("Imput -1", imput_1),   
                                        ("One Hot", onehot),
-                                       ("Modelo", model)])
+                                       ("Modelo", grid_search)])
 # %%
-model_pipe.fit(X_train, y_train)               
+pd.DataFrame(grid_search.cv_results_)
+# %%
+
+def train_test_report(model, X_train, y_train, X_test, y_test, key_metric, is_prob=True):
+    model.fit(X_train, y_train)
+    pred = model.predict(X_test)
+    prob = model.predict_proba(X_test)
+    metric_result = key_metric(y_test, prob[:,1]) if is_prob else key_metric(y_test, pred)
+    return metric_result
+
+# %%
+pipe_rf.fit(X_train, y_train)        
+
 # %%
 ## Assess
 
-y_train_pred = model_pipe.predict(X_train)
-y_train_prob = model_pipe.predict_proba(X_train)
+y_train_pred = pipe_rf.predict(X_train)
+y_train_prob = pipe_rf.predict_proba(X_train)
 
 acc_train = metrics.accuracy_score(y_train, y_train_pred)
 roc_train = metrics.roc_auc_score(y_train, y_train_prob[:,1])
@@ -87,8 +109,8 @@ print("roc_train:", roc_train)
 print("Baseline", round((1-y_train.mean())*100, 2))
 
 # %%
-y_test_pred = model_pipe.predict(X_test)
-y_test_prob = model_pipe.predict_proba(X_test)
+y_test_pred = pipe_rf.predict(X_test)
+y_test_prob = pipe_rf.predict_proba(X_test)
 
 acc_test = metrics.accuracy_score(y_test, y_test_pred)
 roc_test = metrics.roc_auc_score(y_test, y_test_prob[:,1])
@@ -106,8 +128,18 @@ plt.show()
 skplt.metrics.plot_lift_curve(y_test, y_test_prob)
 plt.show()
 # %%
-features_model = model_pipe[:-1].transform(X_train.head()).columns.tolist()
-fs_importance = pd.DataFrame({"importance":model_pipe[-1].feature_importances_, "feature": features_model})
+skplt.metrics.plot_cumulative_gain(y_test, y_test_prob)
+plt.show()
+# %%
+X_oot, y_oot = df_oot[features], df_oot[target]
+y_prob_oot = pipe_rf.predict_proba(X_oot)
+roc_oot = metrics.roc_auc_score(y_oot, y_prob_oot[:,1])
+print("Roc_train:", roc_oot)
 
-fs_importance.sort_values("importance", ascending=False).head(20)
+# %%
+skplt.metrics.plot_lift_curve(y_oot, y_prob_oot)
+plt.show()
+# %%
+skplt.metrics.plot_cumulative_gain(y_oot, y_prob_oot)
+plt.show()
 # %%
